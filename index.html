@@ -81,13 +81,18 @@
   <body>
     <h1>DALL·E Mini Image Generator</h1>
     <p>Enter a prompt and generate images from a DALL·E Mini backend endpoint.</p>
+    <p>
+      Tip: when this page is hosted online (for example on Vercel),
+      <code>localhost</code> points to the visitor's own device and will not reach your model server.
+      Use a public backend URL with CORS enabled, or a same-origin <code>/generate</code> route.
+    </p>
 
     <form id="generator-form">
       <label for="prompt">Prompt</label>
       <textarea id="prompt" required placeholder="A watercolor painting of a cat riding a bicycle at sunset"></textarea>
 
       <div class="row">
-        <input id="backend" type="url" value="http://localhost:8000/generate" required />
+        <input id="backend" type="url" required />
         <button id="generate" type="submit">Generate</button>
       </div>
     </form>
@@ -102,6 +107,19 @@
       const statusEl = document.getElementById('status');
       const galleryEl = document.getElementById('gallery');
       const generateBtn = document.getElementById('generate');
+
+      function getDefaultBackendUrl() {
+        const { protocol, hostname, origin } = window.location;
+        const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+        if (protocol.startsWith('http') && !isLocalHost) {
+          return `${origin}/generate`;
+        }
+
+        return 'http://localhost:8000/generate';
+      }
+
+      backendEl.value = getDefaultBackendUrl();
 
       function setStatus(message) {
         statusEl.textContent = message;
@@ -127,12 +145,23 @@
           return;
         }
 
+        const backendUrl = new URL(backend, window.location.href);
+        const pageIsRemote = !['localhost', '127.0.0.1'].includes(window.location.hostname);
+        const backendIsLocal = ['localhost', '127.0.0.1'].includes(backendUrl.hostname);
+
+        if (pageIsRemote && backendIsLocal) {
+          setStatus(
+            'Generation failed: this page is hosted remotely, so localhost points to your device. Use a public backend URL or /generate on the same host.'
+          );
+          return;
+        }
+
         generateBtn.disabled = true;
         setStatus('Generating images...');
         galleryEl.innerHTML = '';
 
         try {
-          const response = await fetch(backend, {
+          const response = await fetch(backendUrl.toString(), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt })
@@ -153,7 +182,13 @@
           renderImages(images, prompt);
           setStatus(`Generated ${images.length} image(s). Model version: ${data.version || 'unknown'}.`);
         } catch (error) {
-          setStatus(`Generation failed: ${error.message}`);
+          if (error instanceof TypeError) {
+            setStatus(
+              'Generation failed: could not reach backend (network/CORS). Ensure the backend URL is public and allows cross-origin requests from this site.'
+            );
+          } else {
+            setStatus(`Generation failed: ${error.message}`);
+          }
         } finally {
           generateBtn.disabled = false;
         }
