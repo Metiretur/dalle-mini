@@ -119,6 +119,14 @@
         return 'http://localhost:8000/generate';
       }
 
+      function getCandidateUrls(url) {
+        const candidates = [url.toString()];
+        if (url.pathname === '/generate') {
+          candidates.push(new URL('/api/generate', url.origin).toString());
+        }
+        return [...new Set(candidates)];
+      }
+
       backendEl.value = getDefaultBackendUrl();
 
       function setStatus(message) {
@@ -133,6 +141,30 @@
           image.alt = `Generated image ${index + 1} for prompt: ${prompt}`;
           galleryEl.appendChild(image);
         });
+      }
+
+      async function generateImages(prompt, backendUrl) {
+        const candidateUrls = getCandidateUrls(backendUrl);
+        let lastResponse = null;
+
+        for (const candidateUrl of candidateUrls) {
+          const response = await fetch(candidateUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+          });
+
+          if (response.ok) {
+            return { response, url: candidateUrl };
+          }
+
+          lastResponse = response;
+          if (response.status !== 404) {
+            break;
+          }
+        }
+
+        return { response: lastResponse, url: candidateUrls[candidateUrls.length - 1] };
       }
 
       form.addEventListener('submit', async (event) => {
@@ -161,14 +193,18 @@
         galleryEl.innerHTML = '';
 
         try {
-          const response = await fetch(backendUrl.toString(), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt })
-          });
+          const { response, url: usedUrl } = await generateImages(prompt, backendUrl);
 
-          if (!response.ok) {
-            throw new Error(`Backend returned ${response.status}.`);
+          if (!response || !response.ok) {
+            const status = response ? response.status : 'unknown';
+            if (status === 404) {
+              setStatus(
+                'Generation failed: backend endpoint not found (404). Try /generate or /api/generate on your backend host.'
+              );
+            } else {
+              setStatus(`Generation failed: backend returned ${status}.`);
+            }
+            return;
           }
 
           const data = await response.json();
@@ -180,7 +216,9 @@
           }
 
           renderImages(images, prompt);
-          setStatus(`Generated ${images.length} image(s). Model version: ${data.version || 'unknown'}.`);
+          setStatus(
+            `Generated ${images.length} image(s) from ${usedUrl}. Model version: ${data.version || 'unknown'}.`
+          );
         } catch (error) {
           if (error instanceof TypeError) {
             setStatus(
